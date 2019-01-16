@@ -30,6 +30,11 @@
 #include "ltm.h"
 #include "lvm.h"
 
+#if LUA_USE_ROTABLE
+#include "lrotable.h"
+#include "llex.h"
+#endif
+
 
 /* limit for table tag-method chains (to avoid loops) */
 #define MAXTAGLOOP	2000
@@ -157,6 +162,7 @@ static int forlimit (const TValue *obj, lua_Integer *p, lua_Integer step,
 ** if 'slot' is NULL, 't' is not a table; otherwise, 'slot' points to
 ** t[k] entry (which must be nil).
 */
+#if !LUA_USE_ROTABLE
 void luaV_finishget (lua_State *L, const TValue *t, TValue *key, StkId val,
                       const TValue *slot) {
   int loop;  /* counter to avoid infinite loops */
@@ -191,6 +197,53 @@ void luaV_finishget (lua_State *L, const TValue *t, TValue *key, StkId val,
   }
   luaG_runerror(L, "'__index' chain too long; possible loop");
 }
+#else
+void luaV_finishget (lua_State *L, const TValue *t, TValue *key, StkId val,
+                      const TValue *slot) {
+  int loop;  /* counter to avoid infinite loops */
+  const TValue *tm;  /* metamethod */
+  int has_index = 0;
+
+  for (loop = 0; loop < MAXTAGLOOP; loop++) {
+    if (slot == NULL) {  /* 't' is not a table? */
+      lua_assert(!(ttistable(t) || (ttisrotable(t))));
+      tm = luaT_gettmbyobj(L, t, TM_INDEX);
+      if (ttisnil(tm))
+        luaG_typeerror(L, t, "index");  /* no metamethod */
+      /* else will try the metamethod */
+
+      has_index = 1;
+    }
+    else {  /* 't' is a table */
+      lua_assert(ttisnil(slot));
+      tm = fasttm(L, ttistable(t)?hvalue(t)->metatable:(Table*)luaL_rometatable(rvalue(t)), TM_INDEX);  /* table's metamethod */
+      if (tm == NULL) {  /* no metamethod? */
+       setnilvalue(val);  /* result is nil */
+        return;
+      }
+      has_index = 1;
+
+      /* else will try the metamethod */
+    }
+    if (ttisfunction(tm)) {  /* is metamethod a function? */
+      luaT_callTM(L, tm, t, key, val, 1);  /* call it */
+      return;
+    }
+    t = tm;  /* else try to access 'tm[key]' */
+    if (luaV_fastget(L,t,key,slot,luaH_get)) {  /* fast track? */
+      setobj2s(L, val, slot);  /* done */
+      return;
+    }
+    /* else repeat (tail call 'luaV_finishget') */
+  }
+
+  if (has_index) {
+      setnilvalue(val);
+  } else {
+      luaG_runerror(L, "'__index' chain too long; possible loop");
+  }
+}
+#endif
 
 
 /*
@@ -200,6 +253,7 @@ void luaV_finishget (lua_State *L, const TValue *t, TValue *key, StkId val,
 ** entry.  (The value at 'slot' must be nil, otherwise 'luaV_fastset'
 ** would have done the job.)
 */
+#if !LUA_USE_ROTABLE
 void luaV_finishset (lua_State *L, const TValue *t, TValue *key,
                      StkId val, const TValue *slot) {
   int loop;  /* counter to avoid infinite loops */
@@ -236,6 +290,51 @@ void luaV_finishset (lua_State *L, const TValue *t, TValue *key,
   }
   luaG_runerror(L, "'__newindex' chain too long; possible loop");
 }
+#else
+void luaV_finishset (lua_State *L, const TValue *t, TValue *key,
+                     StkId val, const TValue *slot) {
+  int loop;  /* counter to avoid infinite loops */
+
+  for (loop = 0; loop < MAXTAGLOOP; loop++) {
+    const TValue *tm;  /* '__newindex' metamethod */
+    if (slot != NULL) {  /* is 't' a table? */
+      Table *h = (ttistable(t)?hvalue(t):(Table *)rvalue(t));  /* save 't' table */
+      lua_assert(ttisnil(slot));  /* old value must be nil */
+      tm = fasttm(L, ttistable(t)?h->metatable:(Table*)luaL_rometatable(rvalue(t)), TM_NEWINDEX);  /* get metamethod */
+      if (tm == NULL) {  /* no metamethod? */
+    	if (ttype(slot) == LUA_TROTABLE) {
+    		luaG_runerror(L, "attempt to index a rotable value (global '%s')", svalue(key));
+    		return;
+    	}
+        if (slot == luaO_nilobject)  /* no previous entry? */
+          slot = luaH_newkey(L, h, key);  /* create one */
+        /* no metamethod and (now) there is an entry with given key */
+        setobj2t(L, cast(TValue *, slot), val);  /* set its new value */
+        if (ttistable(t)) {
+        	invalidateTMcache(h);
+        	luaC_barrierback(L, h, val);
+        }
+        return;
+      }
+      /* else will try the metamethod */
+    }
+    else {  /* not a table; check metamethod */
+      if (ttisnil(tm = luaT_gettmbyobj(L, t, TM_NEWINDEX)))
+        luaG_typeerror(L, t, "index");
+    }
+    /* try the metamethod */
+    if (ttisfunction(tm)) {
+      luaT_callTM(L, tm, t, key, val, 0);
+      return;
+    }
+    t = tm;  /* else repeat assignment over 'tm' */
+    if (luaV_fastset(L, t, key, slot, luaH_get, val))
+      return;  /* done */
+    /* else loop */
+  }
+  luaG_runerror(L, "'__newindex' chain too long; possible loop");
+}
+#endif
 
 
 /*
@@ -440,6 +539,10 @@ int luaV_equalobj (lua_State *L, const TValue *t1, const TValue *t2) {
         tm = fasttm(L, hvalue(t2)->metatable, TM_EQ);
       break;  /* will try TM */
     }
+#if LUA_USE_ROTABLE
+    case LUA_TROTABLE:
+      return (rvalue(t1) == rvalue(t2));
+#endif
     default:
       return gcvalue(t1) == gcvalue(t2);
   }
@@ -532,6 +635,12 @@ void luaV_objlen (lua_State *L, StkId ra, const TValue *rb) {
       setivalue(ra, tsvalue(rb)->u.lnglen);
       return;
     }
+#if LUA_USE_ROTABLE
+    case LUA_TROTABLE: {
+       setivalue(ra, luaH_getn_ro((void *)rvalue(rb)));
+       return;
+    }
+#endif
     default: {  /* try metamethod */
       tm = luaT_gettmbyobj(L, rb, TM_LEN);
       if (ttisnil(tm))  /* no metamethod? */
@@ -763,6 +872,7 @@ void luaV_finishOp (lua_State *L) {
 }
 
 #define vmdispatch(o)	switch(o)
+//#define vmcase(l)	case l: {printf("%s\r\n", #l);}
 #define vmcase(l)	case l:
 #define vmbreak		break
 
@@ -781,19 +891,27 @@ void luaV_finishOp (lua_State *L) {
   if (!luaV_fastset(L,t,k,slot,luaH_get,v)) \
     Protect(luaV_finishset(L,t,k,v,slot)); }
 
+#include <lua/common/jit_optimizer.inc>
 
+void luaV_execute(lua_State *L) {
+    CallInfo *ci = L->ci;
+    LClosure *cl;
+    TValue *k;
+    StkId base;
+    ci->callstatus |= CIST_FRESH; /* fresh invocation of 'luaV_execute" */
+    newframe: /* reentry point when frame changes (call/return) */
+    lua_assert(ci == L->ci);
+    cl = clLvalue(ci->func); /* local reference to function's closure */
 
-void luaV_execute (lua_State *L) {
-  CallInfo *ci = L->ci;
-  LClosure *cl;
-  TValue *k;
-  StkId base;
-  ci->callstatus |= CIST_FRESH;  /* fresh invocation of 'luaV_execute" */
- newframe:  /* reentry point when frame changes (call/return) */
-  lua_assert(ci == L->ci);
-  cl = clLvalue(ci->func);  /* local reference to function's closure */
-  k = cl->p->k;  /* local reference to function's constant table */
-  base = ci->u.l.base;  /* local copy of function's base */
+#if CONFIG_LUA_RTOS_LUA_USE_JIT_BYTECODE_OPTIMIZER
+    if (!cl->p->optimized) {
+        while (jit_opt(L, ci, cl));
+    }
+#endif
+
+    k = cl->p->k; /* local reference to function's constant table */
+    base = ci->u.l.base; /* local copy of function's base */
+
   /* main loop of interpreter */
   for (;;) {
     Instruction i;
@@ -849,8 +967,16 @@ void luaV_execute (lua_State *L) {
         TValue *upval = cl->upvals[GETARG_A(i)]->v;
         TValue *rb = RKB(i);
         TValue *rc = RKC(i);
+
         settableProtected(L, upval, rb, rc);
-        vmbreak;
+
+		#if LUA_USE_ROTABLE
+		if ((ttype(rc) == LUA_TNIL)) {
+			luaC_fullgc(L, 0);
+		}
+		#endif
+
+		vmbreak;
       }
       vmcase(OP_SETUPVAL) {
         UpVal *uv = cl->upvals[GETARG_B(i)];

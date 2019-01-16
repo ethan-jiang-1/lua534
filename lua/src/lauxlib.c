@@ -26,6 +26,9 @@
 
 #include "lauxlib.h"
 
+#if LUA_USE_ROTABLE
+#include "lrotable.h"
+#endif
 
 /*
 ** {======================================================
@@ -979,6 +982,15 @@ LUALIB_API void luaL_requiref (lua_State *L, const char *modname,
     lua_call(L, 1, 1);  /* call 'openf' to open module */
     lua_pushvalue(L, -1);  /* make copy of module (call result) */
     lua_setfield(L, -3, modname);  /* LOADED[modname] = module */
+
+#if LUA_USE_ROTABLE
+	// If name is in rotable, package is loaded
+	const TValue *res = luaR_findglobal(modname);
+	if (res) {
+		lua_pushrotable(L, (void *)rvalue(res));
+	}
+#endif
+
   }
   lua_remove(L, -2);  /* remove LOADED table */
   if (glb) {
@@ -1008,13 +1020,24 @@ LUALIB_API const char *luaL_gsub (lua_State *L, const char *s, const char *p,
 static void *l_alloc (void *ud, void *ptr, size_t osize, size_t nsize) {
   (void)ud; (void)osize;  /* not used */
   if (nsize == 0) {
+#if LUA_USE_ROTABLE
+    if(ptr)
+#endif
     free(ptr);
     return NULL;
   }
   else
+#if LUA_USE_ROTABLE
+  if (ptr)
+#endif
     return realloc(ptr, nsize);
+#if LUA_USE_ROTABLE
+  else {
+    ptr = malloc(nsize);
+    return ptr;
+  }
+#endif
 }
-
 
 static int panic (lua_State *L) {
   lua_writestringerror("PANIC: unprotected error in call to Lua API (%s)\n",
@@ -1041,3 +1064,12 @@ LUALIB_API void luaL_checkversion_ (lua_State *L, lua_Number ver, size_t sz) {
                   (LUAI_UACNUMBER)ver, (LUAI_UACNUMBER)*v);
 }
 
+#if LUA_USE_ROTABLE
+LUALIB_API void luaL_checkanytable (lua_State *L, int arg) {
+  if (lua_type(L, arg) != LUA_TTABLE && lua_type(L, arg) != LUA_TROTABLE) {
+    const char *msg = lua_pushfstring(L, "table or rotable expected, got %s",
+                                      luaL_typename(L, arg));
+    luaL_argerror(L, arg, msg);
+  }
+}
+#endif

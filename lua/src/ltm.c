@@ -26,12 +26,24 @@
 
 static const char udatatypename[] = "userdata";
 
+#if !LUA_USE_ROTABLE
 LUAI_DDEF const char *const luaT_typenames_[LUA_TOTALTAGS] = {
   "no value",
   "nil", "boolean", udatatypename, "number",
   "string", "table", "function", udatatypename, "thread",
   "proto" /* this last case is used for tests only */
 };
+#else
+#include "lrotable.h"
+
+LUAI_DDEF const char *const luaT_typenames_[LUA_TOTALTAGS] = {
+  "no value",
+  "nil", "boolean", udatatypename, "number",
+  "string", "table", "function", udatatypename, "thread",
+  "rotable",
+  "proto" /* this last case is used for tests only */
+};
+#endif
 
 
 void luaT_init (lua_State *L) {
@@ -60,7 +72,13 @@ const TValue *luaT_gettm (Table *events, TMS event, TString *ename) {
   const TValue *tm = luaH_getshortstr(events, ename);
   lua_assert(event <= TM_EQ);
   if (ttisnil(tm)) {  /* no tag method? */
+#if !LUA_USE_ROTABLE
     events->flags |= cast_byte(1u<<event);  /* cache this fact */
+#else
+	if (!luaR_isrotable(events)) {
+		events->flags |= cast_byte(1u<<event);  /* cache this fact */
+	}
+#endif
     return NULL;
   }
   else return tm;
@@ -76,6 +94,11 @@ const TValue *luaT_gettmbyobj (lua_State *L, const TValue *o, TMS event) {
     case LUA_TUSERDATA:
       mt = uvalue(o)->metatable;
       break;
+#if LUA_USE_ROTABLE
+    case LUA_TROTABLE:
+      mt = (Table *)luaL_rometatable(rvalue(o));
+      break;
+#endif
     default:
       mt = G(L)->mt[ttnov(o)];
   }

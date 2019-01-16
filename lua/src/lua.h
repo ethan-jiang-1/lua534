@@ -12,6 +12,9 @@
 #include <stdarg.h>
 #include <stddef.h>
 
+// LUA RTOS BEGIN
+#include "luartos.h"
+// LUA RTOS END
 
 #include "luaconf.h"
 
@@ -71,7 +74,13 @@ typedef struct lua_State lua_State;
 #define LUA_TUSERDATA		7
 #define LUA_TTHREAD		8
 
-#define LUA_NUMTAGS		9
+#if LUA_USE_ROTABLE
+#define LUA_TROTABLE    9
+#define LUA_NUMTAGS    10
+#else
+#define LUA_NUMTAGS     9
+#endif
+
 
 
 
@@ -482,5 +491,8 @@ struct lua_Debug {
 * SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 ******************************************************************************/
 
+// LUA RTOS BEGIN
+#include "luaconf_custom.h"
+// LUA RTOS END
 
 #endif

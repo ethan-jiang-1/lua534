@@ -29,7 +29,9 @@
 #include "lundump.h"
 #include "lvm.h"
 
-
+#if LUA_USE_ROTABLE
+#include "lrotable.h"
+#endif
 
 const char lua_ident[] =
   "$LuaVersion: " LUA_COPYRIGHT " $"
@@ -396,6 +398,9 @@ LUA_API size_t lua_rawlen (lua_State *L, int idx) {
     case LUA_TLNGSTR: return tsvalue(o)->u.lnglen;
     case LUA_TUSERDATA: return uvalue(o)->len;
     case LUA_TTABLE: return luaH_getn(hvalue(o));
+#if LUA_USE_ROTABLE
+    case LUA_TROTABLE: return(luaH_getn_ro(rvalue(o)));
+#endif
     default: return 0;
   }
 }
@@ -436,6 +441,10 @@ LUA_API const void *lua_topointer (lua_State *L, int idx) {
     case LUA_TTHREAD: return thvalue(o);
     case LUA_TUSERDATA: return getudatamem(uvalue(o));
     case LUA_TLIGHTUSERDATA: return pvalue(o);
+#if LUA_USE_ROTABLE
+    case LUA_TROTABLE:
+	 return rvalue(o);
+#endif
     default: return NULL;
   }
 }
@@ -706,12 +715,25 @@ LUA_API int lua_getmetatable (lua_State *L, int objindex) {
     case LUA_TUSERDATA:
       mt = uvalue(obj)->metatable;
       break;
+#if LUA_USE_ROTABLE
+    case LUA_TROTABLE:
+      mt = (Table *)luaL_rometatable(rvalue(obj));
+      break;
+#endif
     default:
       mt = G(L)->mt[ttnov(obj)];
       break;
   }
   if (mt != NULL) {
+#if !LUA_USE_ROTABLE
     sethvalue(L, L->top, mt);
+#else
+    if(luaR_isrotable(mt)) {
+    	setrvalue(L->top, mt);
+    } else {
+    	sethvalue(L, L->top, mt);
+    }
+#endif
     api_incr_top(L);
     res = 1;
   }
@@ -843,6 +865,9 @@ LUA_API void lua_rawsetp (lua_State *L, int idx, const void *p) {
 
 
 LUA_API int lua_setmetatable (lua_State *L, int objindex) {
+#if LUA_USE_ROTABLE
+    int isrometa = 0;
+#endif
   TValue *obj;
   Table *mt;
   lua_lock(L);
@@ -852,12 +877,25 @@ LUA_API int lua_setmetatable (lua_State *L, int objindex) {
     mt = NULL;
   else {
     api_check(L, ttistable(L->top - 1), "table expected");
+#if !LUA_USE_ROTABLE
     mt = hvalue(L->top - 1);
+#else
+    if (ttistable(L->top - 1)) {
+      mt = hvalue(L->top - 1);
+    } else {
+      mt = (Table*)rvalue(L->top - 1);
+      isrometa = 1;
+    }
+#endif
   }
   switch (ttnov(obj)) {
     case LUA_TTABLE: {
       hvalue(obj)->metatable = mt;
+#if !LUA_USE_ROTABLE
       if (mt) {
+#else
+      if (mt && !isrometa) {
+#endif
         luaC_objbarrier(L, gcvalue(obj), mt);
         luaC_checkfinalizer(L, gcvalue(obj), mt);
       }
@@ -1124,8 +1162,13 @@ LUA_API int lua_next (lua_State *L, int idx) {
   int more;
   lua_lock(L);
   t = index2addr(L, idx);
+#if !LUA_USE_ROTABLE
   api_check(L, ttistable(t), "table expected");
   more = luaH_next(L, hvalue(t), L->top - 1);
+#else
+  api_check(L, ttistable(t) || ttisrotable(t), "table or rotable expected");
+  more = ttistable(t)?luaH_next(L, hvalue(t), L->top - 1):luaH_next_ro(L, rvalue(t), L->top - 1);
+#endif
   if (more) {
     api_incr_top(L);
   }

@@ -148,21 +148,28 @@ static int luaB_corunning (lua_State *L) {
 }
 
 
-static const luaL_Reg co_funcs[] = {
-  {"create", luaB_cocreate},
-  {"resume", luaB_coresume},
-  {"running", luaB_corunning},
-  {"status", luaB_costatus},
-  {"wrap", luaB_cowrap},
-  {"yield", luaB_yield},
-  {"isyieldable", luaB_yieldable},
-  {NULL, NULL}
+#include "modules.h"
+
+static const LUA_REG_TYPE co_funcs[] = {
+  { LSTRKEY( "create" 	   ),			LFUNCVAL( luaB_cocreate  ) },
+  { LSTRKEY( "resume" 	   ),			LFUNCVAL( luaB_coresume  ) },
+  { LSTRKEY( "running" 	   ),			LFUNCVAL( luaB_corunning ) },
+  { LSTRKEY( "status" 	   ),			LFUNCVAL( luaB_costatus  ) },
+  { LSTRKEY( "wrap" 	   ),			LFUNCVAL( luaB_cowrap 	 ) },
+  { LSTRKEY( "yield" 	   ),			LFUNCVAL( luaB_yield 	 ) },
+  { LSTRKEY( "isyieldable" ),			LFUNCVAL( luaB_yieldable ) },
+  { LNILKEY, LNILVAL }
 };
 
 
 
 LUAMOD_API int luaopen_coroutine (lua_State *L) {
+#if !LUA_USE_ROTABLE
   luaL_newlib(L, co_funcs);
   return 1;
+#else
+  return 0;
+#endif
 }
 
+MODULE_REGISTER_ROM(COROUTINE, coroutine, co_funcs, luaopen_coroutine, 1);

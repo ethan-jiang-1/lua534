@@ -20,6 +20,15 @@
 #include "lauxlib.h"
 #include "lualib.h"
 
+// LUA RTOS BEGIN
+#include "lua/modules/sys/lbaselib_adds.inc"
+
+LUALIB_API void luaL_checkanytable (lua_State *L, int arg);
+// LUA RTOS END
+
+#if LUA_USE_ROTABLE && CONFIG_LUA_RTOS_LUA_USE_ROTABLE_CACHE && !CONFIG_LUA_RTOS_LUA_USE_JIT_BYTECODE_OPTIMIZER
+#include "lua/common/cache.h"
+#endif
 
 static int luaB_print (lua_State *L) {
   int n = lua_gettop(L);  /* number of arguments */
@@ -145,8 +154,13 @@ static int luaB_rawequal (lua_State *L) {
 
 static int luaB_rawlen (lua_State *L) {
   int t = lua_type(L, 1);
+#if !LUA_USE_ROTABLE
   luaL_argcheck(L, t == LUA_TTABLE || t == LUA_TSTRING, 1,
                    "table or string expected");
+#else
+  luaL_argcheck(L, t == LUA_TTABLE || t == LUA_TROTABLE || t == LUA_TSTRING, 1,
+                   "table, rotable, or string expected");
+#endif
   lua_pushinteger(L, lua_rawlen(L, 1));
   return 1;
 }
@@ -208,7 +222,11 @@ static int luaB_type (lua_State *L) {
 
 static int pairsmeta (lua_State *L, const char *method, int iszero,
                       lua_CFunction iter) {
-  luaL_checkany(L, 1);
+#if !LUA_USE_ROTABLE
+	luaL_checkany(L, 1);
+#else
+  luaL_checkanytable(L, 1);
+#endif
   if (luaL_getmetafield(L, 1, method) == LUA_TNIL) {  /* no metamethod? */
     lua_pushcfunction(L, iter);  /* will return generator, */
     lua_pushvalue(L, 1);  /* state, */
@@ -224,7 +242,11 @@ static int pairsmeta (lua_State *L, const char *method, int iszero,
 
 
 static int luaB_next (lua_State *L) {
+#if !LUA_USE_ROTABLE
   luaL_checktype(L, 1, LUA_TTABLE);
+#else
+  luaL_checkanytable(L, 1);
+#endif
   lua_settop(L, 2);  /* create a 2nd argument if there isn't one */
   if (lua_next(L, 1))
     return 2;
@@ -449,50 +471,89 @@ static int luaB_tostring (lua_State *L) {
   return 1;
 }
 
+#include "modules.h"
 
-static const luaL_Reg base_funcs[] = {
-  {"assert", luaB_assert},
-  {"collectgarbage", luaB_collectgarbage},
-  {"dofile", luaB_dofile},
-  {"error", luaB_error},
-  {"getmetatable", luaB_getmetatable},
-  {"ipairs", luaB_ipairs},
-  {"loadfile", luaB_loadfile},
-  {"load", luaB_load},
-#if defined(LUA_COMPAT_LOADSTRING)
-  {"loadstring", luaB_load},
+static const LUA_REG_TYPE base_funcs[] = {
+#if LUA_USE_ROTABLE && CONFIG_LUA_RTOS_LUA_USE_ROTABLE_CACHE && !CONFIG_LUA_RTOS_LUA_USE_JIT_BYTECODE_OPTIMIZER
+  { LSTRKEY( "cache" 		  ),			LFUNCVAL( rotable_cache_dump  	) },
 #endif
-  {"next", luaB_next},
-  {"pairs", luaB_pairs},
-  {"pcall", luaB_pcall},
-  {"print", luaB_print},
-  {"rawequal", luaB_rawequal},
-  {"rawlen", luaB_rawlen},
-  {"rawget", luaB_rawget},
-  {"rawset", luaB_rawset},
-  {"select", luaB_select},
-  {"setmetatable", luaB_setmetatable},
-  {"tonumber", luaB_tonumber},
-  {"tostring", luaB_tostring},
-  {"type", luaB_type},
-  {"xpcall", luaB_xpcall},
+  { LSTRKEY( "compile" 		  ),			LFUNCVAL( luaB_compile   		) },
+  { LSTRKEY( "try" 			  ),			LFUNCVAL( luaB_try 				) },
+  { LSTRKEY( "assert" 		  ),			LFUNCVAL( luaB_assert 			) },
+  { LSTRKEY( "collectgarbage" ),			LFUNCVAL( luaB_collectgarbage 	) },
+  { LSTRKEY( "dofile" 		  ),			LFUNCVAL( luaB_dofile 			) },
+  { LSTRKEY( "error" 		  ),			LFUNCVAL( luaB_error 			) },
+  { LSTRKEY( "getmetatable"   ),			LFUNCVAL( luaB_getmetatable 	) },
+  { LSTRKEY( "ipairs" 		  ),			LFUNCVAL( luaB_ipairs 			) },
+  { LSTRKEY( "loadfile" 	  ),			LFUNCVAL( luaB_loadfile 		) },
+  { LSTRKEY( "load" 		  ),			LFUNCVAL( luaB_load 			) },
+#if defined(LUA_COMPAT_LOADSTRING)
+  { LSTRKEY( "loadstring" 	  ),			LFUNCVAL( luaB_load 			) },
+#endif
+  { LSTRKEY( "next" 		  ),			LFUNCVAL( luaB_next 			) },
+  { LSTRKEY( "pairs" 		  ),			LFUNCVAL( luaB_pairs 			) },
+  { LSTRKEY( "pcall" 		  ),			LFUNCVAL( luaB_pcall 			) },
+  { LSTRKEY( "print" 		  ),			LFUNCVAL( luaB_print 			) },
+  { LSTRKEY( "rawequal" 	  ),			LFUNCVAL( luaB_rawequal 		) },
+  { LSTRKEY( "rawlen" 		  ),			LFUNCVAL( luaB_rawlen 			) },
+  { LSTRKEY( "rawget" 		  ),			LFUNCVAL( luaB_rawget 			) },
+  { LSTRKEY( "rawset" 		  ),			LFUNCVAL( luaB_rawset 			) },
+  { LSTRKEY( "select" 		  ),			LFUNCVAL( luaB_select 			) },
+  { LSTRKEY( "setmetatable"   ),			LFUNCVAL( luaB_setmetatable 	) },
+  { LSTRKEY( "tonumber" 	  ),			LFUNCVAL( luaB_tonumber 		) },
+  { LSTRKEY( "tostring" 	  ),			LFUNCVAL( luaB_tostring 		) },
+  { LSTRKEY( "type" 		  ),			LFUNCVAL( luaB_type 			) },
+  { LSTRKEY( "xpcall" 		  ),			LFUNCVAL( luaB_xpcall 			) },
+#if !LUA_USE_ROTABLE
   /* placeholders */
-  {"_G", NULL},
-  {"_VERSION", NULL},
-  {NULL, NULL}
+  { LSTRKEY( "_G" 			  ),			LFUNCVAL( NULL 					) },
+  { LSTRKEY( "_VERSION" 	  ),			LFUNCVAL( NULL 					) },
+#endif
+  { LNILKEY, LNILVAL }
 };
 
+#if LUA_USE_ROTABLE
+static int luaB_index (lua_State *L) {
+  int fres;
+
+  if ((fres = luaR_findfunction(L, base_funcs)) != 0)
+    return fres;
+
+  const char *keyname = luaL_checkstring(L, 2);
+  if (!strcmp(keyname, "_VERSION")) {
+    lua_pushliteral(L, LUA_VERSION);
+    return 1;
+  }
+
+  return 0;
+}
+
+static const luaL_Reg base_load_funcs[] = {
+    { "__index", luaB_index},
+    { NULL, NULL }
+};
+#endif
 
 LUAMOD_API int luaopen_base (lua_State *L) {
-  /* open lib into global table */
-  lua_pushglobaltable(L);
-  luaL_setfuncs(L, base_funcs, 0);
-  /* set global _G */
-  lua_pushvalue(L, -1);
-  lua_setfield(L, -2, "_G");
-  /* set global _VERSION */
-  lua_pushliteral(L, LUA_VERSION);
-  lua_setfield(L, -2, "_VERSION");
-  return 1;
+#if !LUA_USE_ROTABLE
+    /* open lib into global table */
+    lua_pushglobaltable(L);
+    luaL_setfuncs(L, base_funcs, 0);
+    /* set global _G */
+    lua_pushvalue(L, -1);
+    lua_setfield(L, -2, "_G");
+    /* set global _VERSION */
+    lua_pushliteral(L, LUA_VERSION);
+    lua_setfield(L, -2, "_VERSION");
+#else
+    /* open lib into global table */
+    lua_pushglobaltable(L);
+    luaL_setfuncs(L, base_load_funcs, 0);
+
+    lua_pushvalue(L, -1);
+    lua_setmetatable(L, -2);
+#endif
+
+    return 1;
 }
 

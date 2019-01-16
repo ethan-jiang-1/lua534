@@ -75,6 +75,7 @@
 ** lua_saveline defines how to "save" a read line in a "history".
 ** lua_freeline defines how to free a line read by lua_readline.
 */
+#if 0
 #if !defined(lua_readline)	/* { */
 
 #if defined(LUA_USE_READLINE)	/* { */
@@ -96,7 +97,7 @@
 #endif				/* } */
 
 #endif				/* } */
-
+#endif
 
 
 
@@ -166,8 +167,13 @@ static void l_message (const char *pname, const char *msg) {
 static int report (lua_State *L, int status) {
   if (status != LUA_OK) {
     const char *msg = lua_tostring(L, -1);
-    l_message(progname, msg);
-    lua_pop(L, 1);  /* remove message */
+
+    // Lua RTOS
+    if (msg) {
+    // Lua RTOS
+    		l_message(progname, msg);
+    		lua_pop(L, 1);  /* remove message */
+    }
   }
   return status;
 }
@@ -266,7 +272,8 @@ static int dolibrary (lua_State *L, const char *name) {
   return report(L, status);
 }
 
-
+// LUA RTOS BEGIN
+#if 0
 /*
 ** Returns the string to be used as a prompt by the interpreter.
 */
@@ -277,6 +284,8 @@ static const char *get_prompt (lua_State *L, int firstline) {
   if (p == NULL) p = (firstline ? LUA_PROMPT : LUA_PROMPT2);
   return p;
 }
+#endif
+// LUA RTOS END
 
 /* mark in error messages for incomplete statements */
 #define EOFMARK		"<eof>"
@@ -300,10 +309,8 @@ static int incomplete (lua_State *L, int status) {
   return 0;  /* else... */
 }
 
-
-/*
-** Prompt the user, read a line, and push it into the Lua stack.
-*/
+// LUA RTOS BEGIN
+#if 0
 static int pushline (lua_State *L, int firstline) {
   char buffer[LUA_MAXINPUT];
   char *b = buffer;
@@ -323,7 +330,8 @@ static int pushline (lua_State *L, int firstline) {
   lua_freeline(L, b);
   return 1;
 }
-
+#endif
+// LUA RTOS END
 
 /*
 ** Try to compile line on the stack as 'return <line>;'; on return, stack
@@ -352,7 +360,7 @@ static int multiline (lua_State *L) {
     size_t len;
     const char *line = lua_tolstring(L, 1, &len);  /* get what it has */
     int status = luaL_loadbuffer(L, line, len, "=stdin");  /* try it */
-    if (!incomplete(L, status) || !pushline(L, 0)) {
+    if (!incomplete(L, status) || !luaos_pushline(L, 0)) {
       lua_saveline(L, line);  /* keep history */
       return status;  /* cannot or should not try to add continuation line */
     }
@@ -372,7 +380,7 @@ static int multiline (lua_State *L) {
 static int loadline (lua_State *L) {
   int status;
   lua_settop(L, 0);
-  if (!pushline(L, 1))
+  if (!luaos_pushline(L, 1))
     return -1;  /* no input */
   if ((status = addreturn(L)) != LUA_OK)  /* 'return ...' did not work? */
     status = multiline(L);  /* try as command, maybe with continuation lines */
@@ -402,14 +410,18 @@ static void l_print (lua_State *L) {
 ** Do the REPL: repeatedly read (load) a line, evaluate (call) it, and
 ** print any results.
 */
+#if LUA_USE_ROTABLE
+void doREPL (lua_State *L) {
+#else
 static void doREPL (lua_State *L) {
+#endif
   int status;
   const char *oldprogname = progname;
   progname = NULL;  /* no 'progname' on errors in interactive mode */
   while ((status = loadline(L)) != -1) {
     if (status == LUA_OK)
       status = docall(L, 0, LUA_MULTRET);
-    if (status == LUA_OK) l_print(L);
+    if (status == LUA_OK) {LuaLock(L);l_print(L);LuaUnlock(L);}
     else report(L, status);
   }
   lua_settop(L, 0);  /* clear stack */
@@ -592,8 +604,11 @@ static int pmain (lua_State *L) {
   return 1;
 }
 
-
+// LUA RTOS BEGIN
+#if 0
 int main (int argc, char **argv) {
+#else
+int lua_main (int argc, char **argv) {
   int status, result;
   lua_State *L = luaL_newstate();  /* create state */
   if (L == NULL) {
@@ -609,4 +624,9 @@ int main (int argc, char **argv) {
   lua_close(L);
   return (result && status == LUA_OK) ? EXIT_SUCCESS : EXIT_FAILURE;
 }
+
+lua_State *lua_global() {
+    return globalL;
+}
+#endif
 

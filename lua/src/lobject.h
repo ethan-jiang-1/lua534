@@ -426,6 +426,10 @@ typedef struct Proto {
   struct LClosure *cache;  /* last-created closure with this prototype */
   TString  *source;  /* used for debug information */
   GCObject *gclist;
+#if CONFIG_LUA_RTOS_LUA_USE_JIT_BYTECODE_OPTIMIZER
+  int optimized;
+  char *icode;
+#endif
 } Proto;
 
 
@@ -544,6 +548,13 @@ LUAI_FUNC const char *luaO_pushvfstring (lua_State *L, const char *fmt,
 LUAI_FUNC const char *luaO_pushfstring (lua_State *L, const char *fmt, ...);
 LUAI_FUNC void luaO_chunkid (char *out, const char *source, size_t len);
 
+#if LUA_USE_ROTABLE
+#define ttisrotable(o)  checktag((o), LUA_TROTABLE)
+#define rvalue(o)       check_exp(ttisrotable(o), val_(o).p)
+
+#define setrvalue(obj,x) \
+  { TValue *io=(obj); val_(io).p=(x); settt_(io, LUA_TROTABLE); }
+#endif
 
 #endif
 

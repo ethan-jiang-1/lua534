@@ -23,6 +23,9 @@
 #include "lauxlib.h"
 #include "lualib.h"
 
+#if LUA_USE_ROTABLE
+#include "lrotable.h"
+#endif
 
 /*
 ** LUA_IGMARK is a mark to ignore all before it when building the
@@ -601,6 +604,16 @@ static int ll_require (lua_State *L) {
   lua_getfield(L, 2, name);  /* LOADED[name] */
   if (lua_toboolean(L, -1))  /* is it there? */
     return 1;  /* package is already loaded */
+
+#if LUA_USE_ROTABLE
+  // If name is in rotable, package is loaded
+  const TValue *res = luaR_findglobal(name);
+  if (res) {
+    lua_pushrotable(L, (void *)rvalue(res));
+    return 1;
+  }
+#endif
+
   /* else must load package */
   lua_pop(L, 1);  /* remove 'getfield' result */
   findloader(L, name);

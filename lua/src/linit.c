@@ -34,7 +34,7 @@
 #include "lualib.h"
 #include "lauxlib.h"
 
-
+#if !LUA_USE_ROTABLE
 /*
 ** these libs are loaded by lua.c and are readily available to any Lua
 ** program
@@ -65,4 +65,42 @@ LUALIB_API void luaL_openlibs (lua_State *L) {
     lua_pop(L, 1);  /* remove lib */
   }
 }
+#else
+#include "lrotable.h"
+#include "modules.h"
+#include "lgc.h"
+#include <sys/debug.h>
 
+extern const luaL_Reg_adv lua_libs1[];
+
+MODULE_REGISTER_RAM(_G, _G, luaopen_base, 1);
+MODULE_REGISTER_RAM(IO, io, luaopen_io, 1);
+MODULE_REGISTER_RAM(PACKAGE, package, luaopen_package, 1);
+
+LUALIB_API void luaL_openlibs (lua_State *L) {
+  const luaL_Reg_adv *lib = lua_libs1;
+
+  for (; lib->name; lib++) {
+    if (lib->func) {
+  		debug_free_mem_begin(luaL_openlibs);
+
+  		if (lib->autoload) {
+			luaL_requiref(L, lib->name, lib->func, 1);
+			lua_pop(L, 1);  /* remove lib */
+  		} else {
+  			luaL_getsubtable(L, LUA_REGISTRYINDEX, LUA_PRELOAD_TABLE);
+  			lua_pushcfunction(L, lib->func);
+  			lua_setfield(L, -2, lib->name);
+  			lua_pop(L, 1);  // remove PRELOAD table
+  		}
+
+		#if DEBUG_FREE_MEM
+		luaC_fullgc(L, 1);
+		#endif
+	  	debug_free_mem_end(luaL_openlibs, lib->name);
+    }
+  }
+
+  luaC_fullgc(L, 1);
+}
+#endif

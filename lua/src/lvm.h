@@ -55,11 +55,19 @@
 ** pointing to a nil 't[k]' (if 't' is a table) or NULL (otherwise).
 ** 'f' is the raw get function to use.
 */
+#if !LUA_USE_ROTABLE
 #define luaV_fastget(L,t,k,slot,f) \
   (!ttistable(t)  \
    ? (slot = NULL, 0)  /* not a table; 'slot' is NULL and result is 0 */  \
    : (slot = f(hvalue(t), k),  /* else, do raw access */  \
       !ttisnil(slot)))  /* result not nil? */
+#else
+#define luaV_fastget(L,t,k,slot,f) \
+  (!(ttistable(t) || ttisrotable(t))  \
+   ? (slot = NULL, 0)  /* not a table; 'slot' is NULL and result is 0 */  \
+   : (slot = f(hvalue(t), k),  /* else, do raw access */  \
+      !ttisnil(slot)))  /* result not nil? */
+#endif
 
 /*
 ** standard implementation for 'gettable'
@@ -77,6 +85,7 @@
 ** returns true, there is no need to 'invalidateTMcache', because the
 ** call is not creating a new entry.
 */
+#if !LUA_USE_ROTABLE
 #define luaV_fastset(L,t,k,slot,f,v) \
   (!ttistable(t) \
    ? (slot = NULL, 0) \
@@ -85,7 +94,16 @@
      : (luaC_barrierback(L, hvalue(t), v), \
         setobj2t(L, cast(TValue *,slot), v), \
         1)))
-
+#else
+#define luaV_fastset(L,t,k,slot,f,v) \
+  (!ttistable(t) \
+   ? (slot = NULL, 0) \
+   : (slot = f(hvalue(t), k), \
+     ttisnil(slot) ? 0 \
+     : (ttype(slot) == LUA_TROTABLE)?0:(luaC_barrierback(L, hvalue(t), v), \
+        setobj2t(L, cast(TValue *,slot), v), \
+        1)))
+#endif
 
 #define luaV_settable(L,t,k,v) { const TValue *slot; \
   if (!luaV_fastset(L,t,k,slot,luaH_get,v)) \
