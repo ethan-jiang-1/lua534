@@ -1,0 +1,17 @@
+$ cd lua
+
+$ make
+    Please do 'make PLATFORM' where PLATFORM is one of these:
+        aix bsd c89 freebsd generic linux macosx mingw posix solaris
+    See doc/readme.html for complete instructions.
+
+$ make linux
+
+    get *.o in lua/src
+    and
+    lua/src/lublua.a
+    lua/src/lua
+    lua/src/luac
+
+
+
