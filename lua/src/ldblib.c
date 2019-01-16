@@ -5,19 +5,18 @@
 */
 
 
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+
 #define ldblib_c
 #define LUA_LIB
-#define LUAC_CROSS_FILE
 
 #include "lua.h"
-#include C_HEADER_STDIO
-#include C_HEADER_STDLIB
-#include C_HEADER_STRING
 
 #include "lauxlib.h"
 #include "lualib.h"
-#include "lrotable.h"
-#include "sdkconfig.h"
+
 
 
 static int db_getregistry (lua_State *L) {
@@ -25,7 +24,6 @@ static int db_getregistry (lua_State *L) {
   return 1;
 }
 
-#ifndef CONFIG_LUA_BUILTIN_DEBUG_MINIMAL
 
 static int db_getmetatable (lua_State *L) {
   luaL_checkany(L, 1);
@@ -74,7 +72,7 @@ static void settabsi (lua_State *L, const char *i, int v) {
   lua_setfield(L, -2, i);
 }
 
-#endif
+
 static lua_State *getthread (lua_State *L, int *arg) {
   if (lua_isthread(L, 1)) {
     *arg = 1;
@@ -85,7 +83,7 @@ static lua_State *getthread (lua_State *L, int *arg) {
     return L;
   }
 }
-#ifndef CONFIG_LUA_BUILTIN_DEBUG_MINIMAL
+
 
 static void treatstackoption (lua_State *L, lua_State *L1, const char *fname) {
   if (L == L1) {
@@ -109,7 +107,7 @@ static int db_getinfo (lua_State *L) {
       return 1;
     }
   }
-  else if (lua_isfunction(L, arg+1) || lua_islightfunction(L, arg+1)) {
+  else if (lua_isfunction(L, arg+1)) {
     lua_pushfstring(L, ">%s", options);
     options = lua_tostring(L, -1);
     lua_pushvalue(L, arg+1);
@@ -267,7 +265,7 @@ static int db_sethook (lua_State *L) {
   }
   else {
     const char *smask = luaL_checkstring(L, arg+2);
-    luaL_checkanyfunction(L, arg+1);
+    luaL_checktype(L, arg+1, LUA_TFUNCTION);
     count = luaL_optint(L, arg+3, 0);
     func = hookf; mask = makemask(smask, count);
   }
@@ -303,29 +301,20 @@ static int db_gethook (lua_State *L) {
 
 static int db_debug (lua_State *L) {
   for (;;) {
-    char buffer[LUA_MAXINPUT];
-#if defined(LUA_USE_STDIO)
+    char buffer[250];
     fputs("lua_debug> ", stderr);
     if (fgets(buffer, sizeof(buffer), stdin) == 0 ||
-#else
-//    luai_writestringerror("%s", "lua_debug>");
-    if (lua_readline(L, buffer, "lua_debug>") == 0 ||
-#endif
         strcmp(buffer, "cont\n") == 0)
       return 0;
     if (luaL_loadbuffer(L, buffer, strlen(buffer), "=(debug command)") ||
         lua_pcall(L, 0, 0, 0)) {
-#if defined(LUA_USE_STDIO)
       fputs(lua_tostring(L, -1), stderr);
       fputs("\n", stderr);
-#else
-      luai_writestringerror("%s\n", lua_tostring(L, -1));
-#endif
     }
     lua_settop(L, 0);  /* remove eventual returns */
   }
 }
-#endif
+
 
 #define LEVELS1	12	/* size of the first part of the stack */
 #define LEVELS2	10	/* size of the second part of the stack */
@@ -382,31 +371,28 @@ static int db_errorfb (lua_State *L) {
   return 1;
 }
 
-#undef MIN_OPT_LEVEL
-#define MIN_OPT_LEVEL 1
-#include "lrodefs.h"
-const LUA_REG_TYPE dblib[] = {
-#ifndef CONFIG_LUA_BUILTIN_DEBUG_MINIMAL
-  {LSTRKEY("debug"), LFUNCVAL(db_debug)},
-  {LSTRKEY("getfenv"), LFUNCVAL(db_getfenv)},
-  {LSTRKEY("gethook"), LFUNCVAL(db_gethook)},
-  {LSTRKEY("getinfo"), LFUNCVAL(db_getinfo)},
-  {LSTRKEY("getlocal"), LFUNCVAL(db_getlocal)},
-#endif
-  {LSTRKEY("getregistry"), LFUNCVAL(db_getregistry)},
-#ifndef CONFIG_LUA_BUILTIN_DEBUG_MINIMAL
-  {LSTRKEY("getmetatable"), LFUNCVAL(db_getmetatable)},
-  {LSTRKEY("getupvalue"), LFUNCVAL(db_getupvalue)},
-  {LSTRKEY("setfenv"), LFUNCVAL(db_setfenv)},
-  {LSTRKEY("sethook"), LFUNCVAL(db_sethook)},
-  {LSTRKEY("setlocal"), LFUNCVAL(db_setlocal)},
-  {LSTRKEY("setmetatable"), LFUNCVAL(db_setmetatable)},
-  {LSTRKEY("setupvalue"), LFUNCVAL(db_setupvalue)},
-#endif
-  {LSTRKEY("traceback"), LFUNCVAL(db_errorfb)},
-  {LNILKEY, LNILVAL}
+
+static const luaL_Reg dblib[] = {
+  {"debug", db_debug},
+  {"getfenv", db_getfenv},
+  {"gethook", db_gethook},
+  {"getinfo", db_getinfo},
+  {"getlocal", db_getlocal},
+  {"getregistry", db_getregistry},
+  {"getmetatable", db_getmetatable},
+  {"getupvalue", db_getupvalue},
+  {"setfenv", db_setfenv},
+  {"sethook", db_sethook},
+  {"setlocal", db_setlocal},
+  {"setmetatable", db_setmetatable},
+  {"setupvalue", db_setupvalue},
+  {"traceback", db_errorfb},
+  {NULL, NULL}
 };
 
+
 LUALIB_API int luaopen_debug (lua_State *L) {
-  LREGISTER(L, LUA_DBLIBNAME, dblib);
+  luaL_register(L, LUA_DBLIBNAME, dblib);
+  return 1;
 }
+

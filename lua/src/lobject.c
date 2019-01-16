@@ -4,15 +4,16 @@
 ** See Copyright Notice in lua.h
 */
 
+#include <ctype.h>
+#include <stdarg.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
 
 #define lobject_c
 #define LUA_CORE
-#define LUAC_CROSS_FILE
 
 #include "lua.h"
-#include <stdio.h>
-#include <string.h>
-#include <stdlib.h>
 
 #include "ldo.h"
 #include "lmem.h"
@@ -20,13 +21,10 @@
 #include "lstate.h"
 #include "lstring.h"
 #include "lvm.h"
-#ifndef LUA_CROSS_COMPILER
-#include "flash_api.h"
-#else
-#include <limits.h>
-#endif
 
-const TValue luaO_nilobject_ = {LUA_TVALUE_NIL};
+
+
+const TValue luaO_nilobject_ = {{NULL}, LUA_TNIL};
 
 
 /*
@@ -67,6 +65,7 @@ int luaO_log2 (unsigned int x) {
   int l = -1;
   while (x >= 256) { l += 8; x >>= 8; }
   return l + log_2[x];
+
 }
 
 
@@ -81,10 +80,6 @@ int luaO_rawequalObj (const TValue *t1, const TValue *t2) {
       return bvalue(t1) == bvalue(t2);  /* boolean true must be 1 !! */
     case LUA_TLIGHTUSERDATA:
       return pvalue(t1) == pvalue(t2);
-    case LUA_TROTABLE:
-      return rvalue(t1) == rvalue(t2);
-    case LUA_TLIGHTFUNCTION:
-      return fvalue(t1) == fvalue(t2);
     default:
       lua_assert(iscollectable(t1));
       return gcvalue(t1) == gcvalue(t2);
@@ -97,21 +92,7 @@ int luaO_str2d (const char *s, lua_Number *result) {
   *result = lua_str2number(s, &endptr);
   if (endptr == s) return 0;  /* conversion failed */
   if (*endptr == 'x' || *endptr == 'X')  /* maybe an hexadecimal constant? */
-#if defined(LUA_CROSS_COMPILER) 
-    {
-    long lres = strtoul(s, &endptr, 16);
-#if LONG_MAX != 2147483647L
-    if (lres & ~0xffffffffL) 
-      *result = cast_num(-1);
-    else if (lres & 0x80000000L)
-      *result = cast_num(lres | ~0x7fffffffL);
-    else
-#endif
-      *result = cast_num(lres);
-    }
-#else
     *result = cast_num(strtoul(s, &endptr, 16));
-#endif
   if (*endptr == '\0') return 1;  /* most common case */
   while (isspace(cast(unsigned char, *endptr))) endptr++;
   if (*endptr != '\0') return 0;  /* invalid trailing characters? */

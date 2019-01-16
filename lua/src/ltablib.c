@@ -5,15 +5,15 @@
 */
 
 
+#include <stddef.h>
+
 #define ltablib_c
 #define LUA_LIB
-#define LUAC_CROSS_FILE
 
 #include "lua.h"
 
 #include "lauxlib.h"
 #include "lualib.h"
-#include "lrotable.h"
 
 
 #define aux_getn(L,n)	(luaL_checktype(L, n, LUA_TTABLE), luaL_getn(L, n))
@@ -22,7 +22,7 @@
 static int foreachi (lua_State *L) {
   int i;
   int n = aux_getn(L, 1);
-  luaL_checkanyfunction(L, 2);
+  luaL_checktype(L, 2, LUA_TFUNCTION);
   for (i=1; i <= n; i++) {
     lua_pushvalue(L, 2);  /* function */
     lua_pushinteger(L, i);  /* 1st argument */
@@ -38,7 +38,7 @@ static int foreachi (lua_State *L) {
 
 static int foreach (lua_State *L) {
   luaL_checktype(L, 1, LUA_TTABLE);
-  luaL_checkanyfunction(L, 2);
+  luaL_checktype(L, 2, LUA_TFUNCTION);
   lua_pushnil(L);  /* first key */
   while (lua_next(L, 1)) {
     lua_pushvalue(L, 2);  /* function */
@@ -266,22 +266,22 @@ static int sort (lua_State *L) {
 /* }====================================================== */
 
 
-#undef MIN_OPT_LEVEL
-#define MIN_OPT_LEVEL 1
-#include "lrodefs.h"
-const LUA_REG_TYPE tab_funcs[] = {
-  {LSTRKEY("concat"), LFUNCVAL(tconcat)},
-  {LSTRKEY("foreach"), LFUNCVAL(foreach)},
-  {LSTRKEY("foreachi"), LFUNCVAL(foreachi)},
-  {LSTRKEY("getn"), LFUNCVAL(getn)},
-  {LSTRKEY("maxn"), LFUNCVAL(maxn)},
-  {LSTRKEY("insert"), LFUNCVAL(tinsert)},
-  {LSTRKEY("remove"), LFUNCVAL(tremove)},
-  {LSTRKEY("setn"), LFUNCVAL(setn)},
-  {LSTRKEY("sort"), LFUNCVAL(sort)},
-  {LNILKEY, LNILVAL}
+static const luaL_Reg tab_funcs[] = {
+  {"concat", tconcat},
+  {"foreach", foreach},
+  {"foreachi", foreachi},
+  {"getn", getn},
+  {"maxn", maxn},
+  {"insert", tinsert},
+  {"remove", tremove},
+  {"setn", setn},
+  {"sort", sort},
+  {NULL, NULL}
 };
 
+
 LUALIB_API int luaopen_table (lua_State *L) {
-  LREGISTER(L, LUA_TABLIBNAME, tab_funcs);
+  luaL_register(L, LUA_TABLIBNAME, tab_funcs);
+  return 1;
 }
+

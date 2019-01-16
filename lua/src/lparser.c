@@ -1,16 +1,16 @@
 /*
-** $Id: lparser.c,v 2.42.1.3 2007/12/28 15:32:23 roberto Exp $
+** $Id: lparser.c,v 2.42.1.4 2011/10/21 19:31:42 roberto Exp $
 ** Lua Parser
 ** See Copyright Notice in lua.h
 */
 
 
+#include <string.h>
+
 #define lparser_c
 #define LUA_CORE
-#define LUAC_CROSS_FILE
 
 #include "lua.h"
-#include C_HEADER_STRING
 
 #include "lcode.h"
 #include "ldebug.h"
@@ -344,12 +344,6 @@ static void open_func (LexState *ls, FuncState *fs) {
   fs->bl = NULL;
   f->source = ls->source;
   f->maxstacksize = 2;  /* registers 0/1 are always valid */
-#ifdef LUA_OPTIMIZE_DEBUG
-  fs->packedlineinfoSize = 0;
-  fs->lastline = 0;
-  fs->lastlineOffset = 0;
-  fs->lineinfoLastPC = -1;
-#endif
   fs->h = luaH_new(L, 0, 0);
   /* anchor table of constants and prototype (to avoid being collected) */
   sethvalue2s(L, L->top, fs->h);
@@ -367,15 +361,8 @@ static void close_func (LexState *ls) {
   luaK_ret(fs, 0, 0);  /* final return */
   luaM_reallocvector(L, f->code, f->sizecode, fs->pc, Instruction);
   f->sizecode = fs->pc;
-#ifdef LUA_OPTIMIZE_DEBUG
-  f->packedlineinfo[fs->lastlineOffset+1]=0;
-  luaM_reallocvector(L, f->packedlineinfo, fs->packedlineinfoSize,
-                     fs->lastlineOffset+2, unsigned char);
-#else
   luaM_reallocvector(L, f->lineinfo, f->sizelineinfo, fs->pc, int);
   f->sizelineinfo = fs->pc;
-#endif
-
   luaM_reallocvector(L, f->k, f->sizek, fs->nk, TValue);
   f->sizek = fs->nk;
   luaM_reallocvector(L, f->p, f->sizep, fs->np, Proto *);
@@ -392,40 +379,18 @@ static void close_func (LexState *ls) {
   L->top -= 2;  /* remove table and prototype from the stack */
 }
 
-#ifdef LUA_OPTIMIZE_DEBUG
-static void compile_stripdebug(lua_State *L, Proto *f) {
-  int level;
-  lua_pushlightuserdata(L, &luaG_stripdebug );
-  lua_gettable(L, LUA_REGISTRYINDEX);
-  level = lua_isnil(L, -1) ? LUA_OPTIMIZE_DEBUG : lua_tointeger(L, -1);
-  lua_pop(L, 1);
-
-  if (level > 1) {
-    int len = luaG_stripdebug(L, f, level, 1);
-    UNUSED(len);
-  }
-}
-#endif
-
 
 Proto *luaY_parser (lua_State *L, ZIO *z, Mbuffer *buff, const char *name) {
   struct LexState lexstate;
   struct FuncState funcstate;
-  TString *tname = luaS_new(L, name);
-  setsvalue2s(L, L->top, tname);  /* protect name */
-  incr_top(L);
   lexstate.buff = buff;
-  luaX_setinput(L, &lexstate, z, tname);
+  luaX_setinput(L, &lexstate, z, luaS_new(L, name));
   open_func(&lexstate, &funcstate);
   funcstate.f->is_vararg = VARARG_ISVARARG;  /* main func. is always vararg */
   luaX_next(&lexstate);  /* read first token */
   chunk(&lexstate);
   check(&lexstate, TK_EOS);
   close_func(&lexstate);
-#ifdef LUA_OPTIMIZE_DEBUG
-  compile_stripdebug(L, funcstate.f);
-#endif
-  L->top--; /* remove 'name' from stack */
   lua_assert(funcstate.prev == NULL);
   lua_assert(funcstate.f->nups == 0);
   lua_assert(lexstate.fs == NULL);
@@ -916,12 +881,11 @@ static int block_follow (int token) {
 static void block (LexState *ls) {
   /* block -> chunk */
   FuncState *fs = ls->fs;
-  BlockCnt *pbl = (BlockCnt*)luaM_malloc(ls->L,sizeof(BlockCnt));
-  enterblock(fs, pbl, 0);
+  BlockCnt bl;
+  enterblock(fs, &bl, 0);
   chunk(ls);
-  lua_assert(pbl->breaklist == NO_JUMP);
+  lua_assert(bl.breaklist == NO_JUMP);
   leaveblock(fs);
-  luaM_free(ls->L,pbl);
 }
 
 
@@ -1081,13 +1045,13 @@ static int exp1 (LexState *ls) {
 
 static void forbody (LexState *ls, int base, int line, int nvars, int isnum) {
   /* forbody -> DO block */
-  BlockCnt *pbl = (BlockCnt*)luaM_malloc(ls->L,sizeof(BlockCnt));
+  BlockCnt bl;
   FuncState *fs = ls->fs;
   int prep, endfor;
   adjustlocalvars(ls, 3);  /* control variables */
   checknext(ls, TK_DO);
   prep = isnum ? luaK_codeAsBx(fs, OP_FORPREP, base, NO_JUMP) : luaK_jump(fs);
-  enterblock(fs, pbl, 0);  /* scope for declared variables */
+  enterblock(fs, &bl, 0);  /* scope for declared variables */
   adjustlocalvars(ls, nvars);
   luaK_reserveregs(fs, nvars);
   block(ls);
@@ -1097,7 +1061,6 @@ static void forbody (LexState *ls, int base, int line, int nvars, int isnum) {
                      luaK_codeABC(fs, OP_TFORLOOP, base, 0, nvars);
   luaK_fixline(fs, line);  /* pretend that `OP_FOR' starts the loop */
   luaK_patchlist(fs, (isnum ? endfor : luaK_jump(fs)), prep + 1);
-  luaM_free(ls->L,pbl);
 }
 
 

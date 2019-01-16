@@ -6,17 +6,18 @@
 
 
 
+#include <ctype.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+
 #define lbaselib_c
 #define LUA_LIB
-#define LUAC_CROSS_FILE
 
 #include "lua.h"
-#include C_HEADER_STDIO
-#include C_HEADER_STRING
-#include C_HEADER_STDLIB
+
 #include "lauxlib.h"
 #include "lualib.h"
-#include "lrotable.h"
 
 
 
@@ -40,20 +41,11 @@ static int luaB_print (lua_State *L) {
     if (s == NULL)
       return luaL_error(L, LUA_QL("tostring") " must return a string to "
                            LUA_QL("print"));
-#if defined(LUA_USE_STDIO)
     if (i>1) fputs("\t", stdout);
     fputs(s, stdout);
-#else
-    if (i>1)  luai_writestring("\t", 1);
-    luai_writestring(s, strlen(s));
-#endif
     lua_pop(L, 1);  /* pop result */
   }
-#if defined(LUA_USE_STDIO)
   fputs("\n", stdout);
-#else
-  luai_writeline();
-#endif
   return 0;
 }
 
@@ -112,7 +104,7 @@ static int luaB_getmetatable (lua_State *L) {
 static int luaB_setmetatable (lua_State *L) {
   int t = lua_type(L, 2);
   luaL_checktype(L, 1, LUA_TTABLE);
-  luaL_argcheck(L, t == LUA_TNIL || t == LUA_TTABLE || t == LUA_TROTABLE, 2,
+  luaL_argcheck(L, t == LUA_TNIL || t == LUA_TTABLE, 2,
                     "nil or table expected");
   if (luaL_getmetafield(L, 1, "__metatable"))
     luaL_error(L, "cannot change a protected metatable");
@@ -175,7 +167,7 @@ static int luaB_rawequal (lua_State *L) {
 
 
 static int luaB_rawget (lua_State *L) {
-  luaL_checkanytable(L, 1);
+  luaL_checktype(L, 1, LUA_TTABLE);
   luaL_checkany(L, 2);
   lua_settop(L, 2);
   lua_rawget(L, 1);
@@ -200,10 +192,9 @@ static int luaB_gcinfo (lua_State *L) {
 
 static int luaB_collectgarbage (lua_State *L) {
   static const char *const opts[] = {"stop", "restart", "collect",
-    "count", "step", "setpause", "setstepmul","setmemlimit","getmemlimit", NULL};
+    "count", "step", "setpause", "setstepmul", NULL};
   static const int optsnum[] = {LUA_GCSTOP, LUA_GCRESTART, LUA_GCCOLLECT,
-    LUA_GCCOUNT, LUA_GCSTEP, LUA_GCSETPAUSE, LUA_GCSETSTEPMUL,
-		LUA_GCSETMEMLIMIT,LUA_GCGETMEMLIMIT};
+    LUA_GCCOUNT, LUA_GCSTEP, LUA_GCSETPAUSE, LUA_GCSETSTEPMUL};
   int o = luaL_checkoption(L, 1, "collect", opts);
   int ex = luaL_optint(L, 2, 0);
   int res = lua_gc(L, optsnum[o], ex);
@@ -233,7 +224,7 @@ static int luaB_type (lua_State *L) {
 
 
 static int luaB_next (lua_State *L) {
-  luaL_checkanytable(L, 1);
+  luaL_checktype(L, 1, LUA_TTABLE);
   lua_settop(L, 2);  /* create a 2nd argument if there isn't one */
   if (lua_next(L, 1))
     return 2;
@@ -245,7 +236,7 @@ static int luaB_next (lua_State *L) {
 
 
 static int luaB_pairs (lua_State *L) {
-  luaL_checkanytable(L, 1);
+  luaL_checktype(L, 1, LUA_TTABLE);
   lua_pushvalue(L, lua_upvalueindex(1));  /* return generator, */
   lua_pushvalue(L, 1);  /* state, */
   lua_pushnil(L);  /* and initial value */
@@ -255,7 +246,7 @@ static int luaB_pairs (lua_State *L) {
 
 static int ipairsaux (lua_State *L) {
   int i = luaL_checkint(L, 2);
-  luaL_checkanytable(L, 1);
+  luaL_checktype(L, 1, LUA_TTABLE);
   i++;  /* next value */
   lua_pushinteger(L, i);
   lua_rawgeti(L, 1, i);
@@ -264,7 +255,7 @@ static int ipairsaux (lua_State *L) {
 
 
 static int luaB_ipairs (lua_State *L) {
-  luaL_checkanytable(L, 1);
+  luaL_checktype(L, 1, LUA_TTABLE);
   lua_pushvalue(L, lua_upvalueindex(1));  /* return generator, */
   lua_pushvalue(L, 1);  /* state, */
   lua_pushinteger(L, 0);  /* and initial value */
@@ -293,11 +284,7 @@ static int luaB_loadstring (lua_State *L) {
 
 static int luaB_loadfile (lua_State *L) {
   const char *fname = luaL_optstring(L, 1, NULL);
-#ifdef LUA_CROSS_COMPILER
   return load_aux(L, luaL_loadfile(L, fname));
-#else
-  return load_aux(L, luaL_loadfsfile(L, fname));
-#endif
 }
 
 
@@ -309,8 +296,6 @@ static int luaB_loadfile (lua_State *L) {
 */
 static const char *generic_reader (lua_State *L, void *ud, size_t *size) {
   (void)ud;  /* to avoid warnings */
-  if (L == NULL && size == NULL) // direct mode check, doesn't happen
-    return NULL;
   luaL_checkstack(L, 2, "too many nested functions");
   lua_pushvalue(L, 1);  /* get function */
   lua_call(L, 0, 1);  /* call it */
@@ -340,11 +325,7 @@ static int luaB_load (lua_State *L) {
 static int luaB_dofile (lua_State *L) {
   const char *fname = luaL_optstring(L, 1, NULL);
   int n = lua_gettop(L);
-#ifdef LUA_CROSS_COMPILER
   if (luaL_loadfile(L, fname) != 0) lua_error(L);
-#else
-  if (luaL_loadfsfile(L, fname) != 0) lua_error(L);
-#endif
   lua_call(L, 0, LUA_MULTRET);
   return lua_gettop(L) - n;
 }
@@ -462,71 +443,32 @@ static int luaB_newproxy (lua_State *L) {
   return 1;
 }
 
-#define LUA_BASELIB_FUNCLIST\
-  {LSTRKEY("assert"), LFUNCVAL(luaB_assert)},\
-  {LSTRKEY("collectgarbage"), LFUNCVAL(luaB_collectgarbage)},\
-  {LSTRKEY("dofile"), LFUNCVAL(luaB_dofile)},\
-  {LSTRKEY("error"), LFUNCVAL(luaB_error)},\
-  {LSTRKEY("gcinfo"), LFUNCVAL(luaB_gcinfo)},\
-  {LSTRKEY("getfenv"), LFUNCVAL(luaB_getfenv)},\
-  {LSTRKEY("getmetatable"), LFUNCVAL(luaB_getmetatable)},\
-  {LSTRKEY("loadfile"), LFUNCVAL(luaB_loadfile)},\
-  {LSTRKEY("load"), LFUNCVAL(luaB_load)},\
-  {LSTRKEY("loadstring"), LFUNCVAL(luaB_loadstring)},\
-  {LSTRKEY("next"), LFUNCVAL(luaB_next)},\
-  {LSTRKEY("pcall"), LFUNCVAL(luaB_pcall)},\
-  {LSTRKEY("print"), LFUNCVAL(luaB_print)},\
-  {LSTRKEY("rawequal"), LFUNCVAL(luaB_rawequal)},\
-  {LSTRKEY("rawget"), LFUNCVAL(luaB_rawget)},\
-  {LSTRKEY("rawset"), LFUNCVAL(luaB_rawset)},\
-  {LSTRKEY("select"), LFUNCVAL(luaB_select)},\
-  {LSTRKEY("setfenv"), LFUNCVAL(luaB_setfenv)},\
-  {LSTRKEY("setmetatable"), LFUNCVAL(luaB_setmetatable)},\
-  {LSTRKEY("tonumber"), LFUNCVAL(luaB_tonumber)},\
-  {LSTRKEY("tostring"), LFUNCVAL(luaB_tostring)},\
-  {LSTRKEY("type"), LFUNCVAL(luaB_type)},\
-  {LSTRKEY("unpack"), LFUNCVAL(luaB_unpack)},\
-  {LSTRKEY("xpcall"), LFUNCVAL(luaB_xpcall)}
-  
-#if LUA_OPTIMIZE_MEMORY == 2
-#undef MIN_OPT_LEVEL
-#define MIN_OPT_LEVEL 2
-#include "lrodefs.h"
-const LUA_REG_TYPE base_funcs_list[] = {
-  LUA_BASELIB_FUNCLIST,
-  {LNILKEY, LNILVAL}
-};
-#endif
-
-
-static int luaB_index(lua_State *L) {
-#if LUA_OPTIMIZE_MEMORY == 2
-  int fres;
-  if ((fres = luaR_findfunction(L, base_funcs_list)) != 0)
-    return fres;
-#endif  
-  const char *keyname = luaL_checkstring(L, 2);
-  if (!strcmp(keyname, "_VERSION")) {
-    lua_pushliteral(L, LUA_VERSION);
-    return 1;
-  }
-  void *res = luaR_findglobal(keyname, strlen(keyname));
-  if (!res)
-    return 0;
-  else {
-    lua_pushrotable(L, res);
-    return 1;
-  }
-}
 
 static const luaL_Reg base_funcs[] = {
-#if LUA_OPTIMIZE_MEMORY != 2
-#undef MIN_OPT_LEVEL
-#define MIN_OPT_LEVEL 0
-#include "lrodefs.h"
-  LUA_BASELIB_FUNCLIST,
-#endif
-  {"__index", luaB_index},
+  {"assert", luaB_assert},
+  {"collectgarbage", luaB_collectgarbage},
+  {"dofile", luaB_dofile},
+  {"error", luaB_error},
+  {"gcinfo", luaB_gcinfo},
+  {"getfenv", luaB_getfenv},
+  {"getmetatable", luaB_getmetatable},
+  {"loadfile", luaB_loadfile},
+  {"load", luaB_load},
+  {"loadstring", luaB_loadstring},
+  {"next", luaB_next},
+  {"pcall", luaB_pcall},
+  {"print", luaB_print},
+  {"rawequal", luaB_rawequal},
+  {"rawget", luaB_rawget},
+  {"rawset", luaB_rawset},
+  {"select", luaB_select},
+  {"setfenv", luaB_setfenv},
+  {"setmetatable", luaB_setmetatable},
+  {"tonumber", luaB_tonumber},
+  {"tostring", luaB_tostring},
+  {"type", luaB_type},
+  {"unpack", luaB_unpack},
+  {"xpcall", luaB_xpcall},
   {NULL, NULL}
 };
 
@@ -659,17 +601,15 @@ static int luaB_corunning (lua_State *L) {
   return 1;
 }
 
-#undef MIN_OPT_LEVEL
-#define MIN_OPT_LEVEL 1
-#include "lrodefs.h"
-const LUA_REG_TYPE co_funcs[] = {
-  {LSTRKEY("create"), LFUNCVAL(luaB_cocreate)},
-  {LSTRKEY("resume"), LFUNCVAL(luaB_coresume)},
-  {LSTRKEY("running"), LFUNCVAL(luaB_corunning)},
-  {LSTRKEY("status"), LFUNCVAL(luaB_costatus)},
-  {LSTRKEY("wrap"), LFUNCVAL(luaB_cowrap)},
-  {LSTRKEY("yield"), LFUNCVAL(luaB_yield)},
-  {LNILKEY, LNILVAL}
+
+static const luaL_Reg co_funcs[] = {
+  {"create", luaB_cocreate},
+  {"resume", luaB_coresume},
+  {"running", luaB_corunning},
+  {"status", luaB_costatus},
+  {"wrap", luaB_cowrap},
+  {"yield", luaB_yield},
+  {NULL, NULL}
 };
 
 /* }====================================================== */
@@ -688,15 +628,10 @@ static void base_open (lua_State *L) {
   lua_pushvalue(L, LUA_GLOBALSINDEX);
   lua_setglobal(L, "_G");
   /* open lib into global table */
-  luaL_register_light(L, "_G", base_funcs);
-#if LUA_OPTIMIZE_MEMORY > 0
-  lua_pushvalue(L, -1);
-  lua_setmetatable(L, -2);  
-#else
+  luaL_register(L, "_G", base_funcs);
   lua_pushliteral(L, LUA_VERSION);
   lua_setglobal(L, "_VERSION");  /* set global _VERSION */
-#endif
-  /* `ipairs' and `pairs' need auxliliary functions as upvalues */
+  /* `ipairs' and `pairs' need auxiliary functions as upvalues */
   auxopen(L, "ipairs", luaB_ipairs, ipairsaux);
   auxopen(L, "pairs", luaB_pairs, luaB_next);
   /* `newproxy' needs a weaktable as upvalue */
@@ -712,10 +647,7 @@ static void base_open (lua_State *L) {
 
 LUALIB_API int luaopen_base (lua_State *L) {
   base_open(L);
-#if LUA_OPTIMIZE_MEMORY == 0
   luaL_register(L, LUA_COLIBNAME, co_funcs);
   return 2;
-#else
-  return 1;
-#endif
 }
+

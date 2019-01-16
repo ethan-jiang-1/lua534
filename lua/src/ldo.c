@@ -1,17 +1,18 @@
 /*
-** $Id: ldo.c,v 2.38.1.3 2008/01/18 22:31:22 roberto Exp $
+** $Id: ldo.c,v 2.38.1.4 2012/01/18 02:27:10 roberto Exp $
 ** Stack and Call structure of Lua
 ** See Copyright Notice in lua.h
 */
 
+
 #include <setjmp.h>
+#include <stdlib.h>
+#include <string.h>
 
 #define ldo_c
 #define LUA_CORE
-#define LUAC_CROSS_FILE
 
 #include "lua.h"
-#include C_HEADER_STRING
 
 #include "ldebug.h"
 #include "ldo.h"
@@ -50,13 +51,11 @@ struct lua_longjmp {
 void luaD_seterrorobj (lua_State *L, int errcode, StkId oldtop) {
   switch (errcode) {
     case LUA_ERRMEM: {
-      ptrdiff_t oldtopr = savestack(L, oldtop);
-      setsvalue2s(L, restorestack(L, oldtopr), luaS_newliteral(L, MEMERRMSG));
+      setsvalue2s(L, oldtop, luaS_newliteral(L, MEMERRMSG));
       break;
     }
     case LUA_ERRERR: {
-      ptrdiff_t oldtopr = savestack(L, oldtop);
-      setsvalue2s(L, restorestack(L, oldtopr), luaS_newliteral(L, "error in error handling"));
+      setsvalue2s(L, oldtop, luaS_newliteral(L, "error in error handling"));
       break;
     }
     case LUA_ERRSYNTAX:
@@ -93,8 +92,6 @@ static void resetstack (lua_State *L, int status) {
 
 
 void luaD_throw (lua_State *L, int errcode) {
-  unfixedstack(L); /* make sure the fixedstack & block_gc flags get reset. */
-  unset_block_gc(L);
   if (L->errorJmp) {
     L->errorJmp->status = errcode;
     LUAI_THROW(L, L->errorJmp);
@@ -106,7 +103,7 @@ void luaD_throw (lua_State *L, int errcode) {
       lua_unlock(L);
       G(L)->panic(L);
     }
-    // c_exit(EXIT_FAILURE);
+    exit(EXIT_FAILURE);
   }
 }
 
@@ -211,9 +208,7 @@ void luaD_callhook (lua_State *L, int event, int line) {
 static StkId adjust_varargs (lua_State *L, Proto *p, int actual) {
   int i;
   int nfixargs = p->numparams;
-#if defined(LUA_COMPAT_VARARG)
   Table *htab = NULL;
-#endif
   StkId base, fixed;
   for (; actual < nfixargs; ++actual)
     setnilvalue(L->top++);
@@ -222,16 +217,12 @@ static StkId adjust_varargs (lua_State *L, Proto *p, int actual) {
     int nvar = actual - nfixargs;  /* number of extra arguments */
     lua_assert(p->is_vararg & VARARG_HASARG);
     luaC_checkGC(L);
+    luaD_checkstack(L, p->maxstacksize);
     htab = luaH_new(L, nvar, 1);  /* create `arg' table */
-    sethvalue2s(L, L->top, htab); /* put table on stack */
-    incr_top(L);
-    fixedstack(L);
     for (i=0; i<nvar; i++)  /* put extra arguments into `arg' table */
-      setobj2n(L, luaH_setnum(L, htab, i+1), L->top - 1 - nvar + i);
-    unfixedstack(L);
+      setobj2n(L, luaH_setnum(L, htab, i+1), L->top - nvar + i);
     /* store counter in field `n' */
     setnvalue(luaH_setstr(L, htab, luaS_newliteral(L, "n")), cast_num(nvar));
-    L->top--; /* remove table from stack */
   }
 #endif
   /* move fixed parameters to final position */
@@ -241,13 +232,11 @@ static StkId adjust_varargs (lua_State *L, Proto *p, int actual) {
     setobjs2s(L, L->top++, fixed+i);
     setnilvalue(fixed+i);
   }
-#if defined(LUA_COMPAT_VARARG)
   /* add `arg' parameter */
   if (htab) {
     sethvalue(L, L->top++, htab);
     lua_assert(iswhite(obj2gco(htab)));
   }
-#endif
   return base;
 }
 
@@ -274,15 +263,14 @@ static StkId tryfuncTM (lua_State *L, StkId func) {
 
 
 int luaD_precall (lua_State *L, StkId func, int nresults) {
+  LClosure *cl;
   ptrdiff_t funcr;
-  LClosure *cl = NULL;
-  if (!ttisfunction(func) && !ttislightfunction(func)) /* `func' is not a function? */
+  if (!ttisfunction(func)) /* `func' is not a function? */
     func = tryfuncTM(L, func);  /* check the `function' tag method */
   funcr = savestack(L, func);
-  if (ttisfunction(func))
-    cl = &clvalue(func)->l;
+  cl = &clvalue(func)->l;
   L->ci->savedpc = L->savedpc;
-  if (cl && !cl->isC) {  /* Lua function? prepare its call */
+  if (!cl->isC) {  /* Lua function? prepare its call */
     CallInfo *ci;
     StkId st, base;
     Proto *p = cl->p;
@@ -329,10 +317,7 @@ int luaD_precall (lua_State *L, StkId func, int nresults) {
     if (L->hookmask & LUA_MASKCALL)
       luaD_callhook(L, LUA_HOOKCALL, -1);
     lua_unlock(L);
-    if (ttisfunction(ci->func))
-      n = (*curr_func(L)->c.f)(L);  /* do the actual call */
-    else
-      n = ((lua_CFunction)fvalue(ci->func))(L);  /* do the actual call */
+    n = (*curr_func(L)->c.f)(L);  /* do the actual call */
     lua_lock(L);
     if (n < 0)  /* yielding? */
       return PCRYIELD;
@@ -510,7 +495,6 @@ static void f_parser (lua_State *L, void *ud) {
   struct SParser *p = cast(struct SParser *, ud);
   int c = luaZ_lookahead(p->z);
   luaC_checkGC(L);
-  set_block_gc(L);  /* stop collector during parsing */
   tf = ((c == LUA_SIGNATURE[0]) ? luaU_undump : luaY_parser)(L, p->z,
                                                              &p->buff, p->name);
   cl = luaF_newLclosure(L, tf->nups, hvalue(gt(L)));
@@ -519,7 +503,6 @@ static void f_parser (lua_State *L, void *ud) {
     cl->l.upvals[i] = luaF_newupval(L);
   setclvalue(L, L->top, cl);
   incr_top(L);
-  unset_block_gc(L);
 }
 
 

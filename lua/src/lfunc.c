@@ -4,12 +4,13 @@
 ** See Copyright Notice in lua.h
 */
 
+
+#include <stddef.h>
+
 #define lfunc_c
 #define LUA_CORE
-#define LUAC_CROSS_FILE
 
 #include "lua.h"
-#include C_HEADER_STRING
 
 #include "lfunc.h"
 #include "lgc.h"
@@ -65,6 +66,7 @@ UpVal *luaF_findupval (lua_State *L, StkId level) {
   }
   uv = luaM_new(L, UpVal);  /* not found: create a new one */
   uv->tt = LUA_TUPVAL;
+  uv->marked = luaC_white(g);
   uv->v = level;  /* current value lives in the stack */
   uv->next = *pp;  /* chain it in the proper position */
   *pp = obj2gco(uv);
@@ -72,7 +74,6 @@ UpVal *luaF_findupval (lua_State *L, StkId level) {
   uv->u.l.next = g->uvhead.u.l.next;
   uv->u.l.next->u.l.prev = uv;
   g->uvhead.u.l.next = uv;
-  luaC_marknew(L, obj2gco(uv));
   lua_assert(uv->u.l.next->u.l.prev == uv && uv->u.l.prev->u.l.next == uv);
   return uv;
 }
@@ -120,18 +121,14 @@ Proto *luaF_newproto (lua_State *L) {
   f->sizep = 0;
   f->code = NULL;
   f->sizecode = 0;
+  f->sizelineinfo = 0;
   f->sizeupvalues = 0;
   f->nups = 0;
   f->upvalues = NULL;
   f->numparams = 0;
   f->is_vararg = 0;
   f->maxstacksize = 0;
-#ifdef LUA_OPTIMIZE_DEBUG
-  f->packedlineinfo = NULL;
-#else
-  f->sizelineinfo = 0;
   f->lineinfo = NULL;
-#endif
   f->sizelocvars = 0;
   f->locvars = NULL;
   f->linedefined = 0;
@@ -142,20 +139,12 @@ Proto *luaF_newproto (lua_State *L) {
 
 
 void luaF_freeproto (lua_State *L, Proto *f) {
+  luaM_freearray(L, f->code, f->sizecode, Instruction);
   luaM_freearray(L, f->p, f->sizep, Proto *);
   luaM_freearray(L, f->k, f->sizek, TValue);
+  luaM_freearray(L, f->lineinfo, f->sizelineinfo, int);
   luaM_freearray(L, f->locvars, f->sizelocvars, struct LocVar);
   luaM_freearray(L, f->upvalues, f->sizeupvalues, TString *);
-  if (!proto_is_readonly(f)) {
-    luaM_freearray(L, f->code, f->sizecode, Instruction);
-#ifdef LUA_OPTIMIZE_DEBUG
-    if (f->packedlineinfo) {
-      luaM_freearray(L, f->packedlineinfo, strlen(cast(char *, f->packedlineinfo))+1, unsigned char);
-    }
-#else
-    luaM_freearray(L, f->lineinfo, f->sizelineinfo, int);
-#endif
-  }
   luaM_free(L, f);
 }
 

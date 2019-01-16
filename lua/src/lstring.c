@@ -5,83 +5,74 @@
 */
 
 
+#include <string.h>
 
 #define lstring_c
 #define LUA_CORE
-#define LUAC_CROSS_FILE
 
 #include "lua.h"
-#include C_HEADER_STRING
 
 #include "lmem.h"
 #include "lobject.h"
 #include "lstate.h"
 #include "lstring.h"
 
-#define LUAS_READONLY_STRING      1
-#define LUAS_REGULAR_STRING       0
+
 
 void luaS_resize (lua_State *L, int newsize) {
+  GCObject **newhash;
   stringtable *tb;
   int i;
+  if (G(L)->gcstate == GCSsweepstring)
+    return;  /* cannot resize during GC traverse */
+  newhash = luaM_newvector(L, newsize, GCObject *);
   tb = &G(L)->strt;
-  if (luaC_sweepstrgc(L) || newsize == tb->size || is_resizing_strings_gc(L))
-    return;  /* cannot resize during GC traverse or doesn't need to be resized */
-  set_resizing_strings_gc(L);
-  if (newsize > tb->size) {
-    luaM_reallocvector(L, tb->hash, tb->size, newsize, GCObject *);
-    for (i=tb->size; i<newsize; i++) tb->hash[i] = NULL;
-  }
+  for (i=0; i<newsize; i++) newhash[i] = NULL;
   /* rehash */
   for (i=0; i<tb->size; i++) {
     GCObject *p = tb->hash[i];
-    tb->hash[i] = NULL;
     while (p) {  /* for each node in the list */
       GCObject *next = p->gch.next;  /* save next */
       unsigned int h = gco2ts(p)->hash;
       int h1 = lmod(h, newsize);  /* new position */
       lua_assert(cast_int(h%newsize) == lmod(h, newsize));
-      p->gch.next = tb->hash[h1];  /* chain it */
-      tb->hash[h1] = p;
+      p->gch.next = newhash[h1];  /* chain it */
+      newhash[h1] = p;
       p = next;
     }
   }
-  if (newsize < tb->size)
-    luaM_reallocvector(L, tb->hash, tb->size, newsize, GCObject *);
+  luaM_freearray(L, tb->hash, tb->size, TString *);
   tb->size = newsize;
-  unset_resizing_strings_gc(L);
+  tb->hash = newhash;
 }
 
+
 static TString *newlstr (lua_State *L, const char *str, size_t l,
-                                       unsigned int h, int readonly) {
+                                       unsigned int h) {
   TString *ts;
   stringtable *tb;
   if (l+1 > (MAX_SIZET - sizeof(TString))/sizeof(char))
     luaM_toobig(L);
-  tb = &G(L)->strt;
-  if ((tb->nuse + 1) > cast(lu_int32, tb->size) && tb->size <= MAX_INT/2)
-    luaS_resize(L, tb->size*2);  /* too crowded */
-  ts = cast(TString *, luaM_malloc(L, readonly ? sizeof(char**)+sizeof(TString) : (l+1)*sizeof(char)+sizeof(TString)));
+  ts = cast(TString *, luaM_malloc(L, (l+1)*sizeof(char)+sizeof(TString)));
   ts->tsv.len = l;
   ts->tsv.hash = h;
   ts->tsv.marked = luaC_white(G(L));
   ts->tsv.tt = LUA_TSTRING;
-  if (!readonly) {
-    memcpy(ts+1, str, l*sizeof(char));
-    ((char *)(ts+1))[l] = '\0';  /* ending 0 */
-  } else {
-    *(char **)(ts+1) = (char *)str;
-    luaS_readonly(ts);
-  }
+  ts->tsv.reserved = 0;
+  memcpy(ts+1, str, l*sizeof(char));
+  ((char *)(ts+1))[l] = '\0';  /* ending 0 */
+  tb = &G(L)->strt;
   h = lmod(h, tb->size);
   ts->tsv.next = tb->hash[h];  /* chain new entry */
   tb->hash[h] = obj2gco(ts);
   tb->nuse++;
+  if (tb->nuse > cast(lu_int32, tb->size) && tb->size <= MAX_INT/2)
+    luaS_resize(L, tb->size*2);  /* too crowded */
   return ts;
 }
 
 
-static TString *luaS_newlstr_helper (lua_State *L, const char *str, size_t l, int readonly) {
+TString *luaS_newlstr (lua_State *L, const char *str, size_t l) {
   GCObject *o;
   unsigned int h = cast(unsigned int, l);  /* seed */
   size_t step = (l>>5)+1;  /* if string is too long, don't hash all its chars */
@@ -98,35 +89,7 @@ static TString *luaS_newlstr_helper (lua_State *L, const char *str, size_t l, in
       return ts;
     }
   }
-  return newlstr(L, str, l, h, readonly);  /* not found */
-}
-
-static int lua_is_ptr_in_ro_area(const char *p) {
-#ifdef LUA_CROSS_COMPILER
-  return 0;
-#else
-
-#include "compiler.h"
-
-  return p >= RODATA_START_ADDRESS && p <= RODATA_END_ADDRESS;
-#endif
-}
-
-TString *luaS_newlstr (lua_State *L, const char *str, size_t l) {
-  // If the pointer is in a read-only memory and the string is at least 4 chars in length,
-  // create it as a read-only string instead
-  if(lua_is_ptr_in_ro_area(str) && l+1 > sizeof(char**) && l == strlen(str))
-    return luaS_newlstr_helper(L, str, l, LUAS_READONLY_STRING);
-  else
-    return luaS_newlstr_helper(L, str, l, LUAS_REGULAR_STRING);
-}
-
-
-LUAI_FUNC TString *luaS_newrolstr (lua_State *L, const char *str, size_t l) {
-  if(l+1 > sizeof(char**) && l == strlen(str))
-    return luaS_newlstr_helper(L, str, l, LUAS_READONLY_STRING);
-  else // no point in creating a RO string, as it would actually be larger
-    return luaS_newlstr_helper(L, str, l, LUAS_REGULAR_STRING);
+  return newlstr(L, str, l, h);  /* not found */
 }
 
 

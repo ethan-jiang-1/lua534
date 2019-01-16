@@ -9,23 +9,18 @@
 */
 
 
-#define loadlib_c
-#define LUA_LIB
-#define LUAC_CROSS_FILE
-
-#include "lua.h"
 #include <stdlib.h>
 #include <string.h>
-#include <fcntl.h>
 
-#ifndef LUA_CROSS_COMPILER
-#include "vfs.h"
-#include "c_stdlib.h" // for c_getenv
-#endif
+
+#define loadlib_c
+#define LUA_LIB
+
+#include "lua.h"
 
 #include "lauxlib.h"
 #include "lualib.h"
-#include "lrotable.h"
+
 
 /* prefix for open functions in C libraries */
 #define LUA_POF		"luaopen_"
@@ -246,7 +241,7 @@ static void ll_unloadlib (void *lib) {
 }
 
 
-static void * ll_load (lua_State *L, const char *path) {
+static void *ll_load (lua_State *L, const char *path) {
   (void)path;  /* to avoid warnings */
   lua_pushliteral(L, DLMSG);
   return NULL;
@@ -264,7 +259,7 @@ static lua_CFunction ll_sym (lua_State *L, void *lib, const char *sym) {
 
 
 
-static void ** ll_register (lua_State *L, const char *path) {
+static void **ll_register (lua_State *L, const char *path) {
   void **plib;
   lua_pushfstring(L, "%s%s", LIBPREFIX, path);
   lua_gettable(L, LUA_REGISTRYINDEX);  /* check library in registry? */
@@ -332,23 +327,17 @@ static int ll_loadlib (lua_State *L) {
 ** 'require' function
 ** =======================================================
 */
-#ifdef LUA_CROSS_COMPILER
-static int readable (const char *filename) {
-  FILE *f = c_fopen(filename, "r");  /* try to open file */
-  if (f == NULL) return 0;  /* open failed */
-  c_fclose(f);
-  return 1;
-}
-#else
-static int readable (const char *filename) {
-  int f = vfs_open(filename, "r");  /* try to open file */
-  if (!f) return 0;  /* open failed */
-  vfs_close(f);
-  return 1;
-}
-#endif
 
-static const char * pushnexttemplate (lua_State *L, const char *path) {
+
+static int readable (const char *filename) {
+  FILE *f = fopen(filename, "r");  /* try to open file */
+  if (f == NULL) return 0;  /* open failed */
+  fclose(f);
+  return 1;
+}
+
+
+static const char *pushnexttemplate (lua_State *L, const char *path) {
   const char *l;
   while (*path == *LUA_PATHSEP) path++;  /* skip separators */
   if (*path == '\0') return NULL;  /* no more templates */
@@ -359,7 +348,7 @@ static const char * pushnexttemplate (lua_State *L, const char *path) {
 }
 
 
-static const char * findfile (lua_State *L, const char *name,
+static const char *findfile (lua_State *L, const char *name,
                                            const char *pname) {
   const char *path;
   name = luaL_gsub(L, name, ".", LUA_DIRSEP);
@@ -393,11 +382,7 @@ static int loader_Lua (lua_State *L) {
   const char *name = luaL_checkstring(L, 1);
   filename = findfile(L, name, "path");
   if (filename == NULL) return 1;  /* library not found in this path */
-#ifdef LUA_CROSS_COMPILER
   if (luaL_loadfile(L, filename) != 0)
-#else
-  if (luaL_loadfsfile(L, filename) != 0)
-#endif
     loaderror(L, filename);
   return 1;  /* library loaded successfully */
 }
@@ -473,12 +458,6 @@ static int ll_require (lua_State *L) {
     if (lua_touserdata(L, -1) == sentinel)  /* check loops */
       luaL_error(L, "loop or previous error loading module " LUA_QS, name);
     return 1;  /* package is already loaded */
-  }
-  /* Is this a readonly table? */
-  void *res = luaR_findglobal(name, strlen(name));
-  if (res) {
-    lua_pushrotable(L, res);
-    return 1;
   }
   /* else must load it; iterate over available loaders */
   lua_getfield(L, LUA_ENVIRONINDEX, "loaders");
@@ -564,8 +543,6 @@ static void modinit (lua_State *L, const char *modname) {
 
 static int ll_module (lua_State *L) {
   const char *modname = luaL_checkstring(L, 1);
-  if (luaR_findglobal(modname, strlen(modname)))
-    return 0;
   int loaded = lua_gettop(L) + 1;  /* index of _LOADED table */
   lua_getfield(L, LUA_REGISTRYINDEX, "_LOADED");
   lua_getfield(L, loaded, modname);  /* get _LOADED[modname] */
@@ -614,7 +591,7 @@ static int ll_seeall (lua_State *L) {
 
 static void setpath (lua_State *L, const char *fieldname, const char *envname,
                                    const char *def) {
-  const char *path = c_getenv(envname);
+  const char *path = getenv(envname);
   if (path == NULL)  /* no environment variable? */
     lua_pushstring(L, def);  /* use default */
   else {
@@ -646,28 +623,15 @@ static const luaL_Reg ll_funcs[] = {
 static const lua_CFunction loaders[] =
   {loader_preload, loader_Lua, loader_C, loader_Croot, NULL};
 
-#if LUA_OPTIMIZE_MEMORY > 0
-#undef MIN_OPT_LEVEL
-#define MIN_OPT_LEVEL 1
-#include "lrodefs.h"
-const LUA_REG_TYPE lmt[] = {
-  {LRO_STRKEY("__gc"), LRO_FUNCVAL(gctm)},
-  {LRO_NILKEY, LRO_NILVAL}
-};
-#endif
 
 LUALIB_API int luaopen_package (lua_State *L) {
   int i;
   /* create new type _LOADLIB */
-#if LUA_OPTIMIZE_MEMORY == 0
   luaL_newmetatable(L, "_LOADLIB");
-  lua_pushlightfunction(L, gctm);
+  lua_pushcfunction(L, gctm);
   lua_setfield(L, -2, "__gc");
-#else
-  luaL_rometatable(L, "_LOADLIB", (void*)lmt);
-#endif
   /* create `package' table */
-  luaL_register_light(L, LUA_LOADLIBNAME, pk_funcs);
+  luaL_register(L, LUA_LOADLIBNAME, pk_funcs);
 #if defined(LUA_COMPAT_LOADLIB) 
   lua_getfield(L, -1, "loadlib");
   lua_setfield(L, LUA_GLOBALSINDEX, "loadlib");
