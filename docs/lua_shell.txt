@@ -1,0 +1,32 @@
+Lua RTOS is using same shell as Lua but few changes.
+
+changes in org lua.c:
+    1) rename
+
+        int main(int argc, char **argv)
+
+       to
+
+       int lua_main(int argc, char **argv)
+
+
+    2) comment out few lines
+       - not sure why comment out instead of using macro
+
+    3) replace lpushline to luartos_pushline
+       - not sure why need this new function
+       - maybe the tty behavior is little different than std tty?
+
+
+make a shell component:
+
+  check shell.c in component/sys/shell
+
+  1) create a thread
+  2) prepare stdin/stdout/stderr
+  3) create new lua_State
+  4) call doREPL on lua_state
+
+
+
+
