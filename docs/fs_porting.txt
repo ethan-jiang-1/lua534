@@ -1,0 +1,90 @@
+require("aaa")
+
+    ll_require() @ loadlib.c
+    --> findloader() @ loadlib.c
+         using searchers defined in createsearcherstable() @loadlib.c
+         each one eventually using findfile()
+         --> findfile() @ loadlib
+             --> searchpath() @laodlib.c
+                --> readable (const char *filename) @loadlib.c
+                ** only depends on fopen() and fclose()
+
+    four searchers
+    1) searcher_preload -- nothing todo with fs
+    2) searcher_Lua  -- using path
+        findfile() @loadlib
+    3) searcher_C  -- using cpath
+        findfile() @loadlib
+    4) searcher_Croot  -- using cpath
+        findfile() @loadlib
+
+----
+
+dofile("aaa")
+
+    luaB_dofile() @lbaselib.c
+    --> luaL_loadfilex() @lbaselib.c
+        --> luaL_loadfilex() @lauxlib.c
+            fopen/freopen/fclose
+            --> lua_load @lapi.c
+
+                tocheck later
+
+
+
+----
+loadfile("aaa")
+
+    luaB_loadfile() @lbaselib.c
+    --> luaL_loadfilex() @lbaselib.c
+        --> luaL_loadfilex() @lauxlib.c
+            fopen/freopen/fclose
+            --> lua_load @lapi.c
+
+                tocheck later
+
+
+
+
+----
+io
+    @liolib.c
+    io table
+    static const luaL_Reg iolib[] = {
+      {"close", io_close},
+      {"flush", io_flush},
+      {"input", io_input},
+      {"lines", io_lines},
+      {"open", io_open},
+      {"output", io_output},
+      {"popen", io_popen},
+      {"read", io_read},
+      {"tmpfile", io_tmpfile},
+      {"type", io_type},
+      {"write", io_write},
+      {NULL, NULL}
+    };
+
+    file meta table (LUA_FILEHANDLE)
+    static const luaL_Reg flib[] = {
+      {"close", io_close},
+      {"flush", f_flush},
+      {"lines", f_lines},
+      {"read", f_read},
+      {"seek", f_seek},
+      {"setvbuf", f_setvbuf},
+      {"write", f_write},
+      {"__gc", f_gc},
+      {"__tostring", f_tostring},
+      {NULL, NULL}
+    };
+
+    io.open("aaa")
+        --> io_open() @liolib.c -- open fh and put in stream
+            --> newfile() @liolib.c  open a stream () userdata with metatable as LUA_FILEHANDLE
+            * fopen()
+
+    io.close()
+        --> io_close() @liolib.c
+            --> tofile() @liolib.c --find fh from stream
+            --> aux_close() @liolib.c -- close fh in stream

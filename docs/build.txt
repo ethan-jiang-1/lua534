@@ -9,7 +9,7 @@ $ make linux
 
     get *.o in lua/src
     and
-    lua/src/lublua.a
+    lua/src/liblua.a
     lua/src/lua
     lua/src/luac
 
