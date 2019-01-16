@@ -18,9 +18,10 @@ changes in org lua.c:
        - maybe the tty behavior is little different than std tty?
 
 
+
 make a shell component:
 
-  check shell.c in component/sys/shell
+  shell.h/shell.c in components/sys/shell
 
   1) create a thread
   2) prepare stdin/stdout/stderr
